@@ -1,0 +1,115 @@
+name: Smart Stream Manager (Scheduler)
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check-and-trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Run Smart Checker Script
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            if (!fs.existsSync('streams.csv')) {
+              console.log('[-] streams.csv nahi mili. Exiting.');
+              process.exit(0);
+            }
+
+            const csvData = fs.readFileSync('streams.csv', 'utf8');
+            const lines = csvData.trim().split('\n');
+            const header = lines[0];
+            let updatedCsv = [header];
+            let changesMade = false;
+
+            const nowUtc = new Date();
+            console.log(\`[*] Current UTC Time: \${nowUtc.toISOString()}\`);
+
+            for (let i = 1; i < lines.length; i++) {
+              if (!lines[i].trim()) continue;
+              
+              const parts = lines[i].split(',').map(s => s.trim());
+              if (parts.length < 6) {
+                updatedCsv.push(lines[i]);
+                continue;
+              }
+
+              const [url, channel, quality, server, startTimeStr, duration] = parts;
+
+              if (!startTimeStr || startTimeStr === 'None' || startTimeStr === '') {
+                updatedCsv.push(lines[i]);
+                continue;
+              }
+
+              const match = startTimeStr.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+(AM|PM)/i);
+              if (match) {
+                let [_, datePart, hours, minutes, ampm] = match;
+                hours = parseInt(hours);
+                if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+                if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
+
+                const targetDateStr = \`\${datePart}T\${hours.toString().padStart(2, '0')}:\${minutes}:00+05:00\`;
+                const targetTime = new Date(targetDateStr);
+                
+                const diffMinutes = (targetTime - nowUtc) / (1000 * 60);
+                console.log(\`[*] Channel \${channel} scheduled for \${startTimeStr} PKT (Diff: \${diffMinutes.toFixed(1)} mins)\`);
+
+                if (diffMinutes <= 20 && diffMinutes >= -5) {
+                  console.log(\`[🚀] Triggering Channel \${channel} NOW!\`);
+                  const cmd = \`gh workflow run main.yml -f target_url='\${url}' -f okru_stream_channel='\${channel}' -f stream_quality='\${quality}' -f server_selection='\${server}' -f custom_duration='\${duration}'\`;
+                  
+                  try {
+                    execSync(cmd, { stdio: 'inherit' });
+                    console.log(\`[+] Handoff successful. Removing from queue...\`);
+                    changesMade = true;
+                  } catch (e) {
+                    console.error(\`[-] Failed to trigger: \${e.message}\`);
+                    updatedCsv.push(lines[i]);
+                  }
+                } 
+                else if (diffMinutes < -5) {
+                  console.log(\`[-] Channel \${channel} ka time guzar chuka hai. Removing from list.\`);
+                  changesMade = true; 
+                } 
+                else {
+                  updatedCsv.push(lines[i]);
+                }
+              } else {
+                updatedCsv.push(lines[i]);
+              }
+            }
+
+            if (changesMade) {
+              fs.writeFileSync('streams.csv', updatedCsv.join('\n') + '\n');
+              console.log('[+] streams.csv updated locally.');
+            } else {
+              console.log('[*] No triggers needed right now.');
+            }
+          "
+
+      - name: Commit Updated CSV
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add streams.csv
+          git diff --staged --quiet || (git commit -m "Bot: Auto-triggered and updated stream queue" && git push)
