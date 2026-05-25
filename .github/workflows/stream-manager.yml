@@ -41,12 +41,36 @@ jobs:
             const startMs = Date.now();
             const currentRunId = process.env.GITHUB_RUN_ID;
 
-            console.log('[*] All-in-One Super Manager Active! Scanning system every 5 minutes.');
+            // 🕰️ Helper Function: Exact PKT Time Format karne ke liye
+            function getPktTime(offsetMs = 0) {
+              return new Date(Date.now() + offsetMs).toLocaleString('en-US', { 
+                timeZone: 'Asia/Karachi', 
+                hour12: true, 
+                month: 'short', 
+                day: '2-digit', 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+              });
+            }
+
+            console.log('\n==================================================');
+            console.log(\`[*] SUPER MANAGER STARTED AT: \${getPktTime()}\`);
+            console.log('==================================================');
 
             async function startLoop() {
+              let loopCount = 1;
+
               while (Date.now() - startMs < LOOP_DURATION) {
                 try {
-                  // 👉 Pakistan Standard Time (PKT) nikalna
+                  const currentUptime = ((Date.now() - startMs) / 60000).toFixed(1);
+                  
+                  console.log('\n--------------------------------------------------');
+                  console.log(\`[⏱️] SYSTEM CHECK ROUND #\${loopCount}\`);
+                  console.log(\`[📍] Current Time: \${getPktTime()} (PKT)\`);
+                  console.log(\`[⏳] Manager Uptime: \${currentUptime} Minutes\`);
+                  console.log('--------------------------------------------------');
+
                   const nowPkt = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
                   const pktHours = nowPkt.getHours();
                   const pktMinutes = nowPkt.getMinutes();
@@ -56,20 +80,18 @@ jobs:
                   // =========================================================================
                   if (pktHours === 3 && pktMinutes >= 0 && pktMinutes < 15) {
                     console.log('\n==================================================');
-                    console.log('[🛑] 3:00 AM PKT REACHED! STARTING SYSTEM RESET IN 5 MINS...');
+                    console.log(\`[🛑] 3:00 AM PKT REACHED! STARTING SYSTEM RESET...\`);
                     console.log('==================================================');
 
                     let otherRunsPending = true;
                     let attempts = 0;
 
-                    // Step 1: Force Cancel All Other Running Workflows (Except Myself)
                     while (otherRunsPending && attempts < 6) {
                       attempts++;
                       console.log(\`[*] Scanning running workflows... (Attempt \${attempts}/6)\`);
                       
                       const runsJson = execSync('gh run list --status in_progress --json databaseId,workflowName', { encoding: 'utf8' });
                       const runs = JSON.parse(runsJson || '[]');
-                      
                       const otherRuns = runs.filter(r => String(r.databaseId) !== String(currentRunId));
 
                       if (otherRuns.length === 0) {
@@ -92,7 +114,6 @@ jobs:
                       }
                     }
 
-                    // Step 2: Delete All Cancelled Workflows (Kachra Safai)
                     console.log('\n[*] Shifting to Step 2: Cleaning all cancelled workflows (Kachra)...');
                     await new Promise(r => setTimeout(r, 10000)); 
 
@@ -109,9 +130,8 @@ jobs:
                       }
                     }
 
-                    // Step 3: Self-Destruct / Force Cancel Itself Cleanly
                     console.log('\n[🎉] ALL DONE! System is 100% reset and clean.');
-                    console.log('[🛑] Manager is now force-cancelling itself to sleep...');
+                    console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
                     try {
                       execSync(\`gh run cancel \${currentRunId}\`);
                     } catch(e) {}
@@ -119,7 +139,7 @@ jobs:
                   }
 
                   // =========================================================================
-                  // 🔄 NORMAL MODE: STREAM SCHEDULER CHECK (EVERY 5 MINS)
+                  // 🔄 NORMAL MODE: STREAM SCHEDULER CHECK
                   // =========================================================================
                   execSync('git pull origin main --rebase', { stdio: 'ignore' });
                   
@@ -180,21 +200,24 @@ jobs:
                   console.log('[!] Loop warning: ' + err.message);
                 }
 
-                // Exactly 5 minute wait karna aglay round ke liye
+                console.log(\`[*] Check round \${loopCount} completed.\`);
+                console.log(\`[⏰] Sleeping for 5 mins... Next check will be exactly at: \${getPktTime(CHECK_INTERVAL)} (PKT)\`);
+                
+                loopCount++;
                 await new Promise(r => setTimeout(r, CHECK_INTERVAL));
               }
 
               // =========================================================================
-              // ⏱️ SHIFT OVERLAP LOGIC (EXACTLY LIKE stream.js)
+              // ⏱️ SHIFT OVERLAP LOGIC
               // =========================================================================
-              console.log('\n[*] 5h 50m Completed! Triggering next Stream Manager for seamless overlap...');
+              console.log('\n==================================================');
+              console.log(\`[*] 5h 50m Completed at \${getPktTime()}! Triggering next Stream Manager...\`);
               try {
                 execSync('gh workflow run stream-manager.yml', { stdio: 'inherit' });
                 console.log('[+] Next manager triggered successfully. Waiting 5 minutes for handover...');
                 
-                // 5 Minutes (300,000 ms) wait taake naya manager chal jaye aur gap na aaye
                 await new Promise(r => setTimeout(r, 300000));
-                console.log('[+] Handover complete. Old manager shutting down cleanly.');
+                console.log(\`[+] Handover complete at \${getPktTime()}. Old manager shutting down cleanly.\`);
               } catch(err) {
                 console.error('[-] Failed to loop manager:', err.message);
               }
