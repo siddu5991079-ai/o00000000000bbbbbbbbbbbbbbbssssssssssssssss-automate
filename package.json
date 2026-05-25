@@ -1,0 +1,16 @@
+{
+  "name": "stream-bot-obs-test",
+  "version": "1.0.0",
+  "description": "Testing OBS Studio Headless on GitHub Actions",
+  "main": "stream.js",
+  "scripts": {
+    "start": "node stream.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-screen-recorder": "^2.1.2",
+    "obs-websocket-js": "^5.0.3"
+  }
+}
