@@ -1,53 +1,34 @@
-name: Global Kill Switch (3:30 AM PKT with 5-Min Monitor)
+name: Manual Force Stop All (Backup Kill Switch)
 
 on:
-  schedule:
-    - cron: '30 22 * * *'
-  workflow_dispatch: 
+  workflow_dispatch: # 👈 Sirf manual button se chalega
 
 permissions:
   actions: write
 
 jobs:
-  cancel-and-monitor:
+  manual-cancel:
     runs-on: ubuntu-latest
     steps:
-      - name: Force Stop and Monitor for 5 Minutes
+      - name: Force Stop All Actions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "[*] Triggering Global Kill Switch at 3:30 AM PKT..."
+          echo "[*] Manual Kill Switch Triggered! Stopping all running actions..."
           
-          START_TIME=$(date +%s)
-          END_TIME=$((START_TIME + 300))
-          LOOP_COUNT=1
-
-          while [ $(date +%s) -lt $END_TIME ]; do
-            echo ""
-            echo "=================================================="
-            echo "[🔄] Loop Check #$LOOP_COUNT (Time elapsed: $(( $(date +%s) - START_TIME ))s)"
-            echo "=================================================="
-            
-            RUNS=$(gh run list --status in_progress --json databaseId,workflowName -q ".[] | select(.databaseId != $GITHUB_RUN_ID) | .databaseId")
-            
-            if [ -z "$RUNS" ]; then
-              echo "[🎉] SUCCESS: Saare running workflows successfully cancel ho chuke hain!"
-              exit 0
-            fi
-
-            echo "[!] Running actions mile hain. Unhe cancel kar rahe hain..."
-            echo "$RUNS" | while read -r RUN_ID; do
-              if [ -n "$RUN_ID" ]; then
-                echo "[🛑] Cancelling Workflow Run ID: $RUN_ID"
-                gh run cancel "$RUN_ID" || true
-              fi
-            done
-
-            sleep 30
-            LOOP_COUNT=$((LOOP_COUNT + 1))
-          done
-
-          FINAL_RUNS=$(gh run list --status in_progress --json databaseId -q ".[] | select(.databaseId != $GITHUB_RUN_ID) | .databaseId")
-          if [ -n "$FINAL_RUNS" ]; then
-            exit 1
+          # Apni ID ko chor kar baqi sab in-progress actions nikalna
+          RUNS=$(gh run list --status in_progress --json databaseId -q ".[] | select(.databaseId != $GITHUB_RUN_ID) | .databaseId")
+          
+          if [ -z "$RUNS" ]; then
+            echo "[+] Koi workflow running nahi hai. System pehle se clear hai."
+            exit 0
           fi
+
+          echo "$RUNS" | while read -r RUN_ID; do
+            if [ -n "$RUN_ID" ]; then
+              echo "[🛑] Cancelling Workflow Run ID: $RUN_ID"
+              gh run cancel "$RUN_ID" || true
+            fi
+          done
+          
+          echo "[🎉] Sab actions manually band kar diye gaye hain!"
