@@ -1,0 +1,37 @@
+name: Safai Bot (Delete Cancelled Actions 4:00 AM PKT)
+
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write 
+
+jobs:
+  cleanup-kachra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check and Delete Cancelled Workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "[*] Checking for cancelled workflows (kachra)..."
+          
+          CANCELLED_RUNS=$(gh run list --status cancelled --json databaseId -q ".[].databaseId")
+          
+          if [ -z "$CANCELLED_RUNS" ]; then
+            echo "[+] Koi kachra (cancelled runs) nahi mila. System pehle se clean hai!"
+            exit 0
+          fi
+
+          echo "[!] Kachra mil gaya. Safai shuru kar rahe hain..."
+          
+          for RUN_ID in $CANCELLED_RUNS; do
+            if [ -n "$RUN_ID" ]; then
+              echo "[-] Permanently Deleting Run ID: $RUN_ID"
+              gh run delete "$RUN_ID" || true
+            fi
+          done
+          
+          echo "[+] Safai mukammal! Actions tab ab bilkul chamak raha hai."
