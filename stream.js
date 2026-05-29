@@ -145,12 +145,28 @@ async function takeAndBatchScreenshot(page, stepName, forceUpload = false) {
                 const tag = 'live-stream-logs';
                 try { execSync(`gh release view ${tag} || gh release create ${tag} -t "Live Logs"`, { stdio: 'ignore' }); } catch(e) {}
                 
-                // 🌟 2. Smart Cleanup: Delete ONLY this specific channel's old screenshots
+                // 🌟 2. Smart Cleanup: Delete ONLY this specific channel's old screenshots OF THE SAME TYPE
                 try {
                     const oldAssetsRaw = execSync(`gh release view ${tag} --json assets -q ".assets[].name"`, { encoding: 'utf-8' }).trim();
                     if (oldAssetsRaw) {
                         const oldAssets = oldAssetsRaw.split('\n');
-                        const myOldAssets = oldAssets.filter(asset => asset.startsWith(`ch-${SELECTED_CHANNEL}_`));
+                        
+                        // Determine if current upload is an error or a thumbnail
+                        const isErrorUpload = stepName.includes('error') || stepName.includes('located') || stepName.includes('clicked');
+                        
+                        const myOldAssets = oldAssets.filter(asset => {
+                            if (!asset.startsWith(`ch-${SELECTED_CHANNEL}_`)) return false;
+                            
+                            // If uploading an error/status, ONLY delete old errors/status
+                            if (isErrorUpload) {
+                                return !asset.includes('live-thumbnail'); 
+                            } 
+                            // If uploading thumbnails, ONLY delete old thumbnails
+                            else {
+                                return asset.includes('live-thumbnail');
+                            }
+                        });
+
                         for (const asset of myOldAssets) {
                             if (asset) execSync(`gh release delete-asset ${tag} "${asset}" -y`, { stdio: 'ignore' });
                         }
@@ -603,7 +619,6 @@ if (exactDurationMs) {
 }
 
 mainLoop();
-
 
 
 
