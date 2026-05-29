@@ -80,6 +80,45 @@ let pendingScreenshots = [];
 let uploadCycleCount = 0;
 
 // =========================================================================
+// 🧹 GLOBAL STARTUP CLEANUP (DELETE ALL IMAGES)
+// =========================================================================
+async function performStartupCleanup() {
+    console.log(`\n[*] Running Initial Startup Cleanup... Checking for existing images.`);
+    
+    // Random wait (2 to 5 seconds) so if 2 actions start exactly together, they don't crash
+    const jitterMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+    await new Promise(r => setTimeout(r, jitterMs));
+
+    try {
+        const tag = 'live-stream-logs';
+        try { execSync(`gh release view ${tag} || gh release create ${tag} -t "Live Logs"`, { stdio: 'ignore' }); } catch(e) {}
+        
+        const allAssetsRaw = execSync(`gh release view ${tag} --json assets -q ".assets[].name"`, { encoding: 'utf-8' }).trim();
+        
+        if (allAssetsRaw) {
+            const allAssets = allAssetsRaw.split('\n').filter(a => a.trim() !== '');
+            if (allAssets.length > 0) {
+                console.log(`[*] Found ${allAssets.length} old images. Deleting EVERYTHING...`);
+                for (const asset of allAssets) {
+                    try {
+                        execSync(`gh release delete-asset ${tag} "${asset}" -y`, { stdio: 'ignore' });
+                    } catch (delErr) {
+                        // Crash protection: Agar koi aur action isay already delete kar chuka ho, toh ignore karo
+                    }
+                }
+                console.log(`[+] Global Startup Cleanup Complete! Slate is clean.`);
+            } else {
+                console.log(`[*] Release is already empty. Nothing to delete.`);
+            }
+        } else {
+            console.log(`[*] Release is already empty. Nothing to delete.`);
+        }
+    } catch (err) {
+        console.log(`[-] Startup cleanup skipped or minor issue: ${err.message}`);
+    }
+}
+
+// =========================================================================
 // 📸 SMART SCREENSHOT & UPLOAD MANAGER (WITH QUEUE, CLEANUP & RETRY)
 // =========================================================================
 async function takeAndBatchScreenshot(page, stepName, forceUpload = false) {
@@ -368,6 +407,9 @@ async function mainLoop() {
 }
 
 async function startDirectStreaming() {
+    // 🌟 RUN THE GLOBAL STARTUP CLEANUP FIRST
+    await performStartupCleanup();
+
     console.log(`[*] Starting OBS Studio FIRST...`);
     setupOBSConfig();
 
