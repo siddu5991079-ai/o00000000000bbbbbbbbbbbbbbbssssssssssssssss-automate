@@ -1,6 +1,3 @@
-
-
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -85,7 +82,7 @@ let uploadCycleCount = 0;
 // =========================================================================
 // 📸 SMART SCREENSHOT & UPLOAD MANAGER (WITH QUEUE, CLEANUP & RETRY)
 // =========================================================================
-async function takeAndBatchScreenshot(page, stepName) {
+async function takeAndBatchScreenshot(page, stepName, forceUpload = false) {
     try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         // 🌟 Smart Naming: ch-ID_Time_Step.png
@@ -96,8 +93,9 @@ async function takeAndBatchScreenshot(page, stepName) {
         console.log(`[📸] Screenshot saved: ${filePath}`);
         pendingScreenshots.push(filePath);
 
-        if (pendingScreenshots.length >= 3) {
-            console.log(`[🚀] 3 Screenshots collected. Triggering LIVE batch upload...`);
+        // Upload triggers if we hit 3 images OR if we explicitly force it (forceUpload = true)
+        if (pendingScreenshots.length >= 3 || forceUpload) {
+            console.log(`[🚀] Upload criteria met. Triggering LIVE batch upload...`);
             
             // 🌟 1. The "Jitter" Phase (Random wait to avoid API clashes)
             const jitterMs = Math.floor(Math.random() * (10000 - 2000 + 1)) + 2000; // Wait between 2-10 seconds
@@ -220,7 +218,7 @@ async function initializeVideo(page) {
                 }, SERVER_SELECTION);
 
                 if (clickSuccess) {
-                    serverClicked = true; await takeAndBatchScreenshot(page, `server-clicked`);
+                    serverClicked = true; await takeAndBatchScreenshot(page, `server-clicked`, true); // Force upload initial steps
                     await new Promise(r => setTimeout(r, 3000)); await page.bringToFront(); 
                 } else await new Promise(r => setTimeout(r, 2000));
             } catch (err) { await new Promise(r => setTimeout(r, 2000)); }
@@ -246,7 +244,7 @@ async function initializeVideo(page) {
                         console.log(`[+] Play button mil gaya! Click kar raha hoon...`);
                         await frame.evaluate(el => el.click(), playBtn); 
                         buttonClicked = true;
-                        await takeAndBatchScreenshot(page, `play-btn-clicked`);
+                        await takeAndBatchScreenshot(page, `play-btn-clicked`, true); // Force upload
                         break; 
                     }
                 }
@@ -283,7 +281,7 @@ async function initializeVideo(page) {
     }
 
     if (!targetFrame) targetFrame = page.mainFrame();
-    await takeAndBatchScreenshot(page, 'video-located');
+    await takeAndBatchScreenshot(page, 'video-located', true); // Force upload
 
     console.log('[*] Enforcing Black Background and Full Screen UI...');
     await page.evaluate(() => {
@@ -415,7 +413,7 @@ async function startDirectStreaming() {
 
     console.log(`[*] Navigating to: ${TARGET_URL}`);
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await takeAndBatchScreenshot(page, 'after-load');
+    await takeAndBatchScreenshot(page, 'after-load', true); // Force upload
 
     await initializeVideo(page);
 
@@ -455,27 +453,38 @@ async function startDirectStreaming() {
             } else { lastVideoTime = currentVideoTime; frozenCheckTimestamp = now; }
         }
 
+        // Error detection logic with FORCE UPLOAD (true)
         if (criticalErrorFound) {
             console.log(`\n[!] ❌ WATCHDOG DETECTED: CRITICAL_ERROR (Screen par 'stream error' text mila)`);
-            await takeAndBatchScreenshot(page, 'error-stream-text');
+            await takeAndBatchScreenshot(page, 'error-stream-text', true); 
             await handleRecovery('CRITICAL_ERROR', page);
         } 
         else if (overallStatus === 'DEAD') {
             console.log(`\n[!] ❌ WATCHDOG DETECTED: DEAD (Video player gayab hai ya video end ho gayi)`);
-            await takeAndBatchScreenshot(page, 'error-video-dead');
+            await takeAndBatchScreenshot(page, 'error-video-dead', true);
             await handleRecovery('DEAD', page);
         } 
         else if (overallStatus === 'FROZEN') {
             console.log(`\n[!] ❌ WATCHDOG DETECTED: FROZEN (Video pichle 15 seconds se atki hui hai)`);
-            await takeAndBatchScreenshot(page, 'error-video-frozen');
+            await takeAndBatchScreenshot(page, 'error-video-frozen', true);
             await handleRecovery('FROZEN', page);
         }
 
         watchdogTicks++;
-        // 🌟 Naya Watchdog Check: Sirf HEALTHY condition mein live-thumbnail liya jayega
-        if (watchdogTicks % 120 === 0) {
+        
+        // 🌟 NEW 5-MINUTE SEQUENCE LOGIC (60 ticks * 5s = 300s = 5 mins)
+        if (watchdogTicks % 60 === 0) {
             if (overallStatus === 'HEALTHY' && !criticalErrorFound) {
-                await takeAndBatchScreenshot(page, 'live-thumbnail');
+                console.log(`[*] Taking 3 sequential live-thumbnail screenshots with 1s gap...`);
+                for (let i = 1; i <= 3; i++) {
+                    // Teesri picture par forceUpload = true taake fauran push ho jaye
+                    const shouldForceUpload = (i === 3);
+                    await takeAndBatchScreenshot(page, `live-thumbnail-seq${i}`, shouldForceUpload);
+                    
+                    if (i < 3) {
+                        await new Promise(r => setTimeout(r, 1000)); // 1 second gap
+                    }
+                }
             } else {
                 console.log(`[*] Skipping live-thumbnail capture due to unhealthy stream.`);
             }
