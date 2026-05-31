@@ -430,10 +430,11 @@ async function startDirectStreaming() {
         ]
     });
 
-    activeContext = await browser.createIncognitoBrowserContext();
+    // ✨ THE FIX: Correct context creation function name for newer Puppeteer
+    activeContext = await browser.createBrowserContext();
     activePage = await activeContext.newPage();
     
-    backupContext = await browser.createIncognitoBrowserContext();
+    backupContext = await browser.createBrowserContext();
     backupPage = await backupContext.newPage();
 
     const defaultPages = await browser.pages();
@@ -555,7 +556,6 @@ if (exactDurationMs) {
 
 // 🚀 Start Execution
 mainLoop();
-
 
 
 
