@@ -1,4 +1,3 @@
-
 name: 24/7 Pro Stream Bot (OBS Test)
 
 run-name: "OBS Stream - Channel ${{ inputs.okru_stream_channel }}"
@@ -85,6 +84,117 @@ jobs:
           screenshots/*.png
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# // 1 teek hai, bas eek new functionality add karty hai k agar 1st teek hai and backup 2nd teek nahey hai tuu 3rd ko check akro 2nd ko hatawo . yeh add karty hai upper code mei
+
+
+
+# name: 24/7 Pro Stream Bot (OBS Test)
+
+# run-name: "OBS Stream - Channel ${{ inputs.okru_stream_channel }}"
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       target_urls:
+#         description: 'Comma-separated Target URLs (Server1, Server2, Server3)'
+#         required: true
+#         type: string
+#         default: 'https://dadocric.st/player.php?id=starsp3&v=m'
+#       okru_stream_channel:
+#         description: 'OK.ru Broadcast Channel (1 to 8)'
+#         required: true
+#         type: string
+#         default: '1'
+#       server_selection:
+#         description: 'Target Server Button - Type "None" to skip'
+#         required: true
+#         type: string
+#         default: 'None'
+#       stream_quality:
+#         description: 'Internet Speed / Stream Quality'
+#         required: true
+#         type: string
+#         default: '110KBps (Balanced 480p)'
+#       custom_duration:
+#         description: 'Exact Duration to run (e.g., 4h 30m, 5h). Type "None" for auto-overlap.'
+#         required: true
+#         type: string
+#         default: 'None'
+
+# permissions:
+#   contents: write
+#   actions: write 
+
+# jobs:
+#   stream-and-record:
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 360 
+
+#     steps:
+#     - name: Get Code
+#       uses: actions/checkout@v3
+
+#     - name: Setup Node.js
+#       uses: actions/setup-node@v3
+#       with:
+#         node-version: '18'
+
+#     - name: Install Dependencies & OBS Studio
+#       run: |
+#         sudo apt-get update
+#         sudo apt-get install -y xvfb pulseaudio dbus-x11 obs-studio
+#         npm install
+
+#     - name: Run OBS Stream Engine
+#       env:
+#         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+#         TARGET_URLS: ${{ github.event.inputs.target_urls }}
+#         OKRU_STREAM_ID: ${{ github.event.inputs.okru_stream_channel }}
+#         SERVER_SELECTION: ${{ github.event.inputs.server_selection }}
+#         STREAM_QUALITY: ${{ github.event.inputs.stream_quality }}
+#         CUSTOM_DURATION: ${{ github.event.inputs.custom_duration }}
+#       run: |
+#         # Virtual Audio Setup
+#         pulseaudio -D --exit-idle-time=-1
+#         pacmd load-module module-virtual-sink sink_name=v1
+#         pacmd set-default-sink v1
+#         pacmd set-default-source v1.monitor
+        
+#         # Virtual Display (Xvfb)
+#         xvfb-run -s "-screen 0 1280x720x24 -ac" node stream.js
+
+#     - name: Final Leftover Upload
+#       if: always() 
+#       uses: softprops/action-gh-release@v1
+#       with:
+#         tag_name: "live-stream-logs"
+#         name: "Live Broadcast Logs"
+#         body: "Auto updated live stream status."
+#         files: |
+#           screenshots/*.png
+#       env:
+#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
         
 
