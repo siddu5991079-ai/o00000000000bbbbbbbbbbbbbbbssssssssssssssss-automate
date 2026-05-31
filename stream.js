@@ -77,10 +77,6 @@ let obsProcess = null;
 let activePage = null;
 let backupPage = null;
 
-// Contexts to isolate cookies & local storage
-let activeContext = null;
-let backupContext = null;
-
 const FROZEN_THRESHOLD_MS = 5000; 
 
 if (!fs.existsSync('./screenshots')) fs.mkdirSync('./screenshots');
@@ -117,13 +113,14 @@ async function takeAndBatchScreenshot(page, stepName) {
 }
 
 // =========================================================================
-// ✨ INSTANT BLACKOUT FUNCTION
+// ✨ INSTANT BLACKOUT FUNCTION (Hides Website Before Loading)
 // =========================================================================
 async function applyInstantBlackout(page) {
     await page.evaluateOnNewDocument(() => {
         const style = document.createElement('style');
         style.innerHTML = `
             html, body { background-color: black !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
+            /* Force any iframe to cover the entire screen immediately */
             iframe { 
                 position: fixed !important; top: 0 !important; left: 0 !important; 
                 width: 100vw !important; height: 100vh !important; 
@@ -183,6 +180,7 @@ function setupOBSConfig() {
 // =========================================================================
 async function initializeVideo(page, startMuted, isActivePage) {
     try {
+        // ✨ FIX 1: Enforce Blackout IMMEDIATELY (Doosri layer safety ke liye)
         console.log('[*] Enforcing Instant Black Background & Full Screen UI...');
         await page.evaluate(() => {
             document.documentElement.style.backgroundColor = 'black';
@@ -198,6 +196,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
             });
         }).catch(() => {});
 
+        // Server Selection
         if (SERVER_SELECTION !== 'None') {
             let serverClicked = false; let serverAttempts = 0;
             while (!serverClicked && serverAttempts < 10) { 
@@ -219,12 +218,14 @@ async function initializeVideo(page, startMuted, isActivePage) {
             }
         }
 
+        // Play Button Hunt
         console.log('[*] Hunting for the Play Button...');
         let buttonClicked = false; let attempts = 0;
         
         while (!buttonClicked && attempts < 15) {
             for (const frame of page.frames()) {
                 try {
+                    // Added generic classes to catch "Click to Unmute" overlays automatically
                     const playBtn = await frame.$('.jw-icon-display[aria-label="Play"], button[data-plyr="play"], .vjs-big-play-button, [class*="unmute"]');
                     if (playBtn) {
                         const isVisible = await frame.evaluate(el => {
@@ -245,6 +246,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
             attempts++;
         }
 
+        // Lock Video element
         console.log('[*] Scanning for Video Player...');
         let targetFrame = null;
         for (const frame of page.frames()) {
@@ -266,8 +268,10 @@ async function initializeVideo(page, startMuted, isActivePage) {
 
             const video = document.querySelector('video');
             if (video) { 
-                video.muted = muteVideo; 
-                video.volume = 1.0; 
+                // ✅ UPDATE: Removed .muted = muteVideo;
+                video.muted = false; // System level audio should remain active
+                video.volume = muteVideo ? 0.0 : 1.0; // Control audio through volume instead
+                
                 video.style.position = 'fixed'; 
                 video.style.top = '0px'; 
                 video.style.left = '0px';
@@ -311,16 +315,6 @@ async function startWatchdog() {
 
         let activeStatus = await checkPageStatus(activePage);
 
-        // ✨ FIX: ENFORCE AUDIO ON ACTIVE TAB EVERY CYCLE
-        await activePage.evaluate(() => {
-            const video = document.querySelector('video');
-            // Agar video ghalti se mute ho gayi ho toh usay waapis unmute kar do
-            if (video && (video.muted || video.volume === 0)) {
-                video.muted = false;
-                video.volume = 1.0;
-            }
-        }).catch(()=>{});
-
         if (activeStatus.status === 'HEALTHY') {
             if (activeStatus.currentTime === lastActiveTime) {
                 if (Date.now() - frozenCheckTimestamp > FROZEN_THRESHOLD_MS) activeStatus.status = 'FROZEN';
@@ -340,8 +334,9 @@ async function startWatchdog() {
             if (backupStatus.status === 'HEALTHY') {
                 console.log(`[+] Backup Tab is Healthy! Executing INSTANT HOT-SWAP ⚡`);
                 
-                await activePage.evaluate(() => { const v = document.querySelector('video'); if(v) v.muted = true; }).catch(()=>{});
-                await backupPage.evaluate(() => { const v = document.querySelector('video'); if(v) v.muted = false; v.volume = 1.0; }).catch(()=>{});
+                // ✅ UPDATE: Shifted to volume manipulation instead of .muted
+                await activePage.evaluate(() => { const v = document.querySelector('video'); if(v) v.volume = 0.0; }).catch(()=>{});
+                await backupPage.evaluate(() => { const v = document.querySelector('video'); if(v) { v.muted = false; v.volume = 1.0; } }).catch(()=>{});
                 
                 await backupPage.bringToFront();
                 console.log(`[+] Switch successful. Stream continues smoothly!`);
@@ -407,20 +402,10 @@ async function startDirectStreaming() {
         ]
     });
 
-    // ✨ FIX: Complete Isolation using Incognito Browser Contexts
-    // Dono tabs ki cookies aur localStorage alag ho jayegi
-    activeContext = await browser.createIncognitoBrowserContext();
-    activePage = await activeContext.newPage();
+    activePage = (await browser.pages())[0]; 
+    backupPage = await browser.newPage();
     
-    backupContext = await browser.createIncognitoBrowserContext();
-    backupPage = await backupContext.newPage();
-
-    // Default blank page close kar dein
-    const defaultPages = await browser.pages();
-    for (const p of defaultPages) {
-        if (p !== activePage && p !== backupPage) await p.close();
-    }
-    
+    // ✨ FIX 2: Inject CSS logic before any website loads
     await applyInstantBlackout(activePage);
     await applyInstantBlackout(backupPage);
 
@@ -552,7 +537,9 @@ mainLoop();
 
 
 
-// 1 yeh teek hai audio agaya bas yeh upper browser k url dek raha hai 
+
+
+// 1 yeh teek hai audio agaya bas yeh upper browser k url dek raha hai , iss below code me 2 ignotive mode wala system add keya hai . upper code mei yeh wala tareeqaa nahey hai waha par yeh .muted k jaqaa .volume use karky deekty hai 
 
 
 // const puppeteer = require('puppeteer-extra');
@@ -1146,7 +1133,7 @@ mainLoop();
 
 
 
-// ===================== Alhamdullaj ===================================
+// ===================== Alhamdullaj *** ===================================
 
 
 // const puppeteer = require('puppeteer-extra');
