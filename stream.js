@@ -77,6 +77,7 @@ let obsProcess = null;
 let activePage = null;
 let backupPage = null;
 
+// Contexts to isolate cookies & local storage
 let activeContext = null;
 let backupContext = null;
 
@@ -115,6 +116,9 @@ async function takeAndBatchScreenshot(page, stepName) {
     } catch (e) { }
 }
 
+// =========================================================================
+// ✨ INSTANT BLACKOUT FUNCTION
+// =========================================================================
 async function applyInstantBlackout(page) {
     await page.evaluateOnNewDocument(() => {
         const style = document.createElement('style');
@@ -241,7 +245,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
             attempts++;
         }
 
-        console.log('[*] Scanning for Video Player & Injecting Anti-Mute Sync...');
+        console.log('[*] Scanning for Video Player...');
         let targetFrame = null;
         for (const frame of page.frames()) {
             try {
@@ -260,26 +264,10 @@ async function initializeVideo(page, startMuted, isActivePage) {
             style.innerHTML = `.jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, [data-player] .controls { display: none !important; opacity: 0 !important; visibility: hidden !important; }`;
             document.head.appendChild(style);
 
-            // 🛡️ ANTI-MUTE SYNC: 1. Stop JS Player from saving state
-            try {
-                const originalSetItem = Storage.prototype.setItem;
-                Storage.prototype.setItem = function(key, value) {
-                    const k = key.toLowerCase();
-                    if (k.includes('mute') || k.includes('volume') || k.includes('audio')) {
-                        return; // BLOCKED! Website cannot save audio state
-                    }
-                    originalSetItem.apply(this, arguments);
-                };
-            } catch(e) {}
-
             const video = document.querySelector('video');
             if (video) { 
-                // 🛡️ ANTI-MUTE SYNC: 2. Stop player from listening to our DOM mute triggers
-                video.addEventListener('volumechange', (e) => e.stopImmediatePropagation(), true);
-
                 video.muted = muteVideo; 
-                video.volume = muteVideo ? 0 : 1.0; 
-                
+                video.volume = 1.0; 
                 video.style.position = 'fixed'; 
                 video.style.top = '0px'; 
                 video.style.left = '0px';
@@ -323,19 +311,15 @@ async function startWatchdog() {
 
         let activeStatus = await checkPageStatus(activePage);
 
-        // 🔊 ENFORCE FULL AUDIO ON ACTIVE TAB EVERY CYCLE (Deep Frame Scan)
-        try {
-            for (const frame of activePage.frames()) {
-                await frame.evaluate(() => {
-                    const v = document.querySelector('video');
-                    if (v && (v.muted || v.volume === 0)) {
-                        v.addEventListener('volumechange', (e) => e.stopImmediatePropagation(), true);
-                        v.muted = false;
-                        v.volume = 1.0;
-                    }
-                }).catch(()=>{});
+        // ✨ FIX: ENFORCE AUDIO ON ACTIVE TAB EVERY CYCLE
+        await activePage.evaluate(() => {
+            const video = document.querySelector('video');
+            // Agar video ghalti se mute ho gayi ho toh usay waapis unmute kar do
+            if (video && (video.muted || video.volume === 0)) {
+                video.muted = false;
+                video.volume = 1.0;
             }
-        } catch(e) {}
+        }).catch(()=>{});
 
         if (activeStatus.status === 'HEALTHY') {
             if (activeStatus.currentTime === lastActiveTime) {
@@ -356,15 +340,8 @@ async function startWatchdog() {
             if (backupStatus.status === 'HEALTHY') {
                 console.log(`[+] Backup Tab is Healthy! Executing INSTANT HOT-SWAP ⚡`);
                 
-                // Mute purana (Active), Unmute naya (Backup) stealthily
-                try {
-                    for (const frame of activePage.frames()) {
-                        await frame.evaluate(() => { const v = document.querySelector('video'); if(v) { v.muted = true; v.volume = 0; } }).catch(()=>{});
-                    }
-                    for (const frame of backupPage.frames()) {
-                        await frame.evaluate(() => { const v = document.querySelector('video'); if(v) { v.muted = false; v.volume = 1.0; } }).catch(()=>{});
-                    }
-                } catch(e){}
+                await activePage.evaluate(() => { const v = document.querySelector('video'); if(v) v.muted = true; }).catch(()=>{});
+                await backupPage.evaluate(() => { const v = document.querySelector('video'); if(v) v.muted = false; v.volume = 1.0; }).catch(()=>{});
                 
                 await backupPage.bringToFront();
                 console.log(`[+] Switch successful. Stream continues smoothly!`);
@@ -421,24 +398,24 @@ async function startDirectStreaming() {
     console.log(`[*] Starting browser...`);
     browser = await puppeteer.launch({
         headless: false, 
-        defaultViewport: null, // ✨ FIX: Null karne se video exactly screen par fit hogi, koi borders nahi aayenge
+        defaultViewport: { width: 1280, height: 720 },
         ignoreDefaultArgs: ['--enable-automation'], 
         args: [
             '--no-sandbox', '--disable-setuid-sandbox',
-            '--window-size=1280,720', '--window-position=0,0', 
-            '--app=data:text/html,', // ✨ FIX: Yeh command Tabs aur URL bar ko hamesha ke liye ghayab kar degi
-            '--kiosk', '--start-fullscreen',
-            '--hide-scrollbars', // ✨ FIX: Agar koi scrollbar ho toh usey bhi hide kar dega
+            '--window-size=1280,720', '--window-position=0,0', '--kiosk', '--start-fullscreen',
             '--autoplay-policy=no-user-gesture-required'
         ]
     });
 
-    activeContext = await browser.createBrowserContext();
+    // ✨ FIX: Complete Isolation using Incognito Browser Contexts
+    // Dono tabs ki cookies aur localStorage alag ho jayegi
+    activeContext = await browser.createIncognitoBrowserContext();
     activePage = await activeContext.newPage();
     
-    backupContext = await browser.createBrowserContext();
+    backupContext = await browser.createIncognitoBrowserContext();
     backupPage = await backupContext.newPage();
 
+    // Default blank page close kar dein
     const defaultPages = await browser.pages();
     for (const p of defaultPages) {
         if (p !== activePage && p !== backupPage) await p.close();
