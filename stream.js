@@ -374,38 +374,46 @@ async function startWatchdog() {
             if (backupStatus.status === 'HEALTHY') {
                 console.log(`[+] Backup Tab is Healthy! Executing INSTANT SMART HOT-SWAP ⚡`);
                 
-                // STEP 1: Mute Active Page (Deep scan all frames)
+                // STEP 1: Mute Active Page (Safe Deep scan all frames)
                 for (const frame of activePage.frames()) {
-                    await frame.evaluate(() => { 
-                        document.querySelectorAll('video, audio').forEach(m => m.volume = 0.0); 
-                    }).catch(()=>{});
+                    try {
+                        if (!frame.isDetached()) {
+                            await frame.evaluate(() => { 
+                                document.querySelectorAll('video, audio').forEach(m => m.volume = 0.0); 
+                            });
+                        }
+                    } catch(e) { /* Ignore dead frames quietly */ }
                 }
                 
                 // STEP 2: Bring backup to front (Un-throttles browser engine)
                 await backupPage.bringToFront();
                 await new Promise(r => setTimeout(r, 500)); // Small delay for Chrome to wake up the tab
                 
-                // STEP 3: Unmute, Play & Enforce CSS on Backup Page (Deep scan all frames)
+                // STEP 3: Unmute, Play & Enforce CSS on Backup Page (Safe Deep scan all frames)
                 for (const frame of backupPage.frames()) {
-                    await frame.evaluate(() => { 
-                        document.querySelectorAll('video, audio').forEach(m => { 
-                            m.muted = false; 
-                            m.volume = 1.0; 
-                            try { m.play(); } catch(e) {} // Force play if browser paused it
-                            
-                            // Re-apply full screen CSS directly to video element just in case it shrunk in background
-                            if (m.clientWidth > 100 || (m.src && m.src.startsWith('blob:')) || m.matches('.jw-video, .plyr__video, .vjs-tech')) {
-                                m.style.position = 'fixed'; 
-                                m.style.top = '0px'; 
-                                m.style.left = '0px';
-                                m.style.width = '100vw'; 
-                                m.style.height = '100vh';
-                                m.style.zIndex = '2147483647'; 
-                                m.style.backgroundColor = 'black'; 
-                                m.style.objectFit = 'contain';
-                            }
-                        }); 
-                    }).catch(()=>{});
+                    try {
+                        if (!frame.isDetached()) {
+                            await frame.evaluate(() => { 
+                                document.querySelectorAll('video, audio').forEach(m => { 
+                                    m.muted = false; 
+                                    m.volume = 1.0; 
+                                    try { m.play(); } catch(e) {} // Force play if browser paused it
+                                    
+                                    // Re-apply full screen CSS directly to video element just in case it shrunk in background
+                                    if (m.clientWidth > 100 || (m.src && m.src.startsWith('blob:')) || m.matches('.jw-video, .plyr__video, .vjs-tech')) {
+                                        m.style.position = 'fixed'; 
+                                        m.style.top = '0px'; 
+                                        m.style.left = '0px';
+                                        m.style.width = '100vw'; 
+                                        m.style.height = '100vh';
+                                        m.style.zIndex = '2147483647'; 
+                                        m.style.backgroundColor = 'black'; 
+                                        m.style.objectFit = 'contain';
+                                    }
+                                }); 
+                            });
+                        }
+                    } catch(e) { /* Ignore dead frames quietly */ }
                 }
                 
                 console.log(`[+] Smart Switch successful. Audio and Video Stream continues smoothly!`);
