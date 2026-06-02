@@ -110,7 +110,6 @@ async function takeAndBatchScreenshot(page, stepName) {
 
                 const fileList = pendingScreenshots.join(' ');
                 
-                // ⚡ FIX: Asynchronous upload to prevent Watchdog block!
                 exec(`gh release upload ${tag} ${fileList} --clobber`, (err) => {
                     if (!err) {
                         uploadCycleCount++;
@@ -231,7 +230,7 @@ function setupOBSConfig() {
 }
 
 // =========================================================================
-// 🎬 VIDEO INITIALIZATION (Smart Autoplay & Force Play Logic)
+// 🎬 VIDEO INITIALIZATION (Smart Autoplay, Force Play & FULLSCREEN UI)
 // =========================================================================
 async function initializeVideo(page, startMuted, isActivePage) {
     try {
@@ -265,12 +264,10 @@ async function initializeVideo(page, startMuted, isActivePage) {
             
             for (const frame of page.frames()) {
                 try {
-                    // 1. SMART CHECK: Autoplay detection
                     const autoPlayed = await frame.evaluate(() => {
                         let playing = false;
                         document.querySelectorAll('video').forEach(v => {
                             if (v.clientWidth > 100 && !v.paused && v.currentTime > 0) {
-                                // Agar video chal rahi hai toh unmute kar do foran
                                 v.muted = false; 
                                 v.volume = 1.0;
                                 playing = true;
@@ -280,12 +277,11 @@ async function initializeVideo(page, startMuted, isActivePage) {
                     });
 
                     if (autoPlayed) {
-                        console.log(`[+] Video khud automatically start ho chuki hai (Autoplay Detected)! Unmuting...`);
+                        console.log(`[+] Video khud automatically start ho chuki hai! Unmuting...`);
                         isVideoPlaying = true;
                         break;
                     }
 
-                    // 2. Play button dhoondho
                     const playBtn = await frame.$('.jw-icon-display[aria-label="Play"], button[data-plyr="play"], .vjs-big-play-button, [class*="unmute"], .fp-play');
                     if (playBtn) {
                         const isVisible = await frame.evaluate(el => {
@@ -302,7 +298,6 @@ async function initializeVideo(page, startMuted, isActivePage) {
                         }
                     }
 
-                    // 3. FORCE PLAY FALLBACK (Agar 6 attempts tak kuch na ho)
                     if (!isVideoPlaying && attempts > 5) {
                         const forced = await frame.evaluate(() => {
                             let played = false;
@@ -310,7 +305,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
                                 if (v.clientWidth > 100) { 
                                     v.muted = false;
                                     v.volume = 1.0;
-                                    v.click(); // Simulated user click
+                                    v.click();
                                     const playPromise = v.play();
                                     if (playPromise !== undefined) playPromise.catch(e => {});
                                     played = true;
@@ -320,7 +315,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
                         });
 
                         if (forced) {
-                            console.log(`[+] Play button chupa hua tha. Direct Video Element ko Force Play kar diya!`);
+                            console.log(`[+] Direct Video Element ko Force Play kar diya!`);
                             await takeAndBatchScreenshot(page, `force-play-applied`);
                             isVideoPlaying = true;
                             break;
@@ -351,12 +346,54 @@ async function initializeVideo(page, startMuted, isActivePage) {
 
         if (!targetFrame) targetFrame = page.mainFrame();
 
-        console.log('[*] Enforcing Black Background and Full Screen UI safely...');
+        console.log('[*] Enforcing Full Screen Iframe & Hiding Website UI...');
+        // ⚡ YEH HUSSA NAYA HAI: Main website se chat, banners hide karna aur Asal iframe ko Fullscreen karna
         await page.evaluate(() => {
+            document.documentElement.style.backgroundColor = 'black';
             document.body.style.backgroundColor = 'black';
             document.body.style.overflow = 'hidden';
+
+            // 1. Sab IFRAMES ko scan karo aur sab se bara dhoondho (Asal Stream Iframe)
+            let iframes = Array.from(document.querySelectorAll('iframe'));
+            let mainIframe = null;
+            let maxArea = 0;
+
+            iframes.forEach(ifr => {
+                let area = ifr.clientWidth * ifr.clientHeight;
+                if (area > maxArea && area > 5000) { 
+                    maxArea = area;
+                    mainIframe = ifr;
+                }
+            });
+
+            // 2. Baaki chote ad-iframes ko invisible kar do
+            iframes.forEach(ifr => {
+                if (ifr !== mainIframe) {
+                    ifr.style.opacity = '0';
+                    ifr.style.pointerEvents = 'none';
+                    ifr.style.position = 'absolute';
+                    ifr.style.zIndex = '-999';
+                }
+            });
+
+            // 3. Asal Iframe ko poori screen par phela do!
+            if (mainIframe) {
+                mainIframe.style.position = 'fixed';
+                mainIframe.style.top = '0px';
+                mainIframe.style.left = '0px';
+                mainIframe.style.width = '100vw';
+                mainIframe.style.height = '100vh';
+                mainIframe.style.zIndex = '2147483646';
+                mainIframe.style.backgroundColor = 'black';
+                mainIframe.style.border = 'none';
+            }
+
+            // 4. Extra website ki UI (Chat wagera) ko hide kar do
+            const junk = document.querySelectorAll('.chat, #chat, header, footer, .sidebar, .banner, .ads');
+            junk.forEach(el => el.style.display = 'none');
         }).catch(() => {});
 
+        // ⚡ Ab Iframe k ANDAR wali video ko bhi full space allow karna
         await targetFrame.evaluate(async (muteVideo) => {
             const style = document.createElement('style');
             style.innerHTML = `
@@ -372,7 +409,6 @@ async function initializeVideo(page, startMuted, isActivePage) {
             const videos = Array.from(document.querySelectorAll('video'));
             let realVideo = null;
 
-            // Yeh assure karega ke background tab muted rahe aur active full volume par
             mediaElements.forEach(media => {
                 media.muted = false; 
                 media.volume = muteVideo ? 0.0 : 1.0; 
@@ -457,7 +493,6 @@ async function startWatchdog() {
                 lastActiveTime = activeStatus.currentTime;
                 frozenCheckTimestamp = Date.now();
                 
-                // 🔊 ANTI-MUTE SHIELD
                 for (const frame of activePage.frames()) {
                     try {
                         if (!frame.isDetached()) {
@@ -504,7 +539,6 @@ async function startWatchdog() {
                 console.log(`[*] Initializing Video on the newly active tab...`);
                 await initializeVideo(backupPage, false, true); 
 
-                // Swap variables
                 let brokenPage = activePage;
                 activePage = backupPage;
                 backupPage = brokenPage;
@@ -512,7 +546,6 @@ async function startWatchdog() {
                 lastActiveTime = -1;
                 frozenCheckTimestamp = Date.now();
 
-                // Rotate URL Index
                 currentUrlIndex = backupUrlIndex; 
                 activeUrlStr = urlList[currentUrlIndex]; 
 
@@ -705,7 +738,6 @@ if (exactDurationMs) {
 
 // 🚀 Start Execution
 mainLoop();
-
 
 
 
