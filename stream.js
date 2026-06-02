@@ -83,7 +83,8 @@ let obsProcess = null;
 let activePage = null;
 let backupPage = null;
 
-const FROZEN_THRESHOLD_MS = 5000; 
+// ⚡ FIX: Increased threshold to 15 seconds to allow safe buffering on tab swap
+const FROZEN_THRESHOLD_MS = 15000; 
 
 if (!fs.existsSync('./screenshots')) fs.mkdirSync('./screenshots');
 let pendingScreenshots = [];
@@ -119,54 +120,52 @@ async function takeAndBatchScreenshot(page, stepName) {
 }
 
 // =========================================================================
-// ✨ PREMIUM LOADING UI FUNCTIONS
+// ✨ PREMIUM LOADING UI FUNCTIONS (UPGRADED)
 // =========================================================================
 async function showLoadingUI(page, title, sub) {
     try {
         await page.evaluate((t, s) => {
-            if (window.self !== window.top) return; // Sirf main window me inject karo
+            if (window.self !== window.top) return; 
             let overlay = document.getElementById('smart-stream-overlay');
-            if (!overlay) {
-                overlay = document.createElement('div');
-                overlay.id = 'smart-stream-overlay';
-                overlay.innerHTML = `
-                    <style>
-                        #smart-stream-overlay {
-                            position: fixed !important; top: 0 !important; left: 0 !important; 
-                            width: 100vw !important; height: 100vh !important;
-                            background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%) !important;
-                            z-index: 2147483647 !important; display: flex !important; flex-direction: column !important;
-                            justify-content: center !important; align-items: center !important; color: #ffffff !important;
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-                        }
-                        .stream-spinner {
-                            width: 80px; height: 80px; border: 6px solid rgba(255, 255, 255, 0.1);
-                            border-top: 6px solid #e50914; border-radius: 50%;
-                            animation: spin-overlay 1s linear infinite; margin-bottom: 30px;
-                            box-shadow: 0 0 25px rgba(229, 9, 20, 0.4);
-                        }
-                        @keyframes spin-overlay { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                        .stream-title { 
-                            font-size: 36px !important; font-weight: 800 !important; letter-spacing: 3px !important; 
-                            margin-bottom: 15px !important; text-transform: uppercase !important; 
-                            text-shadow: 0px 4px 10px rgba(0,0,0,0.8) !important;
-                        }
-                        .stream-sub { 
-                            font-size: 20px !important; color: #cccccc !important; text-align: center !important; 
-                            max-width: 600px !important; line-height: 1.6 !important; font-weight: 400 !important;
-                        }
-                        .stream-blink { animation: blinker 1.5s linear infinite; color: #e50914; font-weight: bold; }
-                        @keyframes blinker { 50% { opacity: 0.3; } }
-                    </style>
-                    <div class="stream-spinner"></div>
-                    <div class="stream-title" id="overlay-title"></div>
-                    <div class="stream-sub" id="overlay-sub"></div>
-                `;
-                document.body.appendChild(overlay);
-            }
-            overlay.style.display = 'flex';
-            document.getElementById('overlay-title').innerText = t;
-            document.getElementById('overlay-sub').innerHTML = s;
+            if (overlay) overlay.remove(); // Nuke any old overlay first
+
+            overlay = document.createElement('div');
+            overlay.id = 'smart-stream-overlay';
+            overlay.innerHTML = `
+                <style>
+                    #smart-stream-overlay {
+                        position: fixed !important; top: 0 !important; left: 0 !important; 
+                        width: 100vw !important; height: 100vh !important;
+                        background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%) !important;
+                        z-index: 2147483647 !important; display: flex !important; flex-direction: column !important;
+                        justify-content: center !important; align-items: center !important; color: #ffffff !important;
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+                        pointer-events: none !important; /* Let clicks pass through if needed */
+                    }
+                    .stream-spinner {
+                        width: 80px; height: 80px; border: 6px solid rgba(255, 255, 255, 0.1);
+                        border-top: 6px solid #e50914; border-radius: 50%;
+                        animation: spin-overlay 1s linear infinite; margin-bottom: 30px;
+                        box-shadow: 0 0 25px rgba(229, 9, 20, 0.4);
+                    }
+                    @keyframes spin-overlay { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                    .stream-title { 
+                        font-size: 36px !important; font-weight: 800 !important; letter-spacing: 3px !important; 
+                        margin-bottom: 15px !important; text-transform: uppercase !important; 
+                        text-shadow: 0px 4px 10px rgba(0,0,0,0.8) !important;
+                    }
+                    .stream-sub { 
+                        font-size: 20px !important; color: #cccccc !important; text-align: center !important; 
+                        max-width: 600px !important; line-height: 1.6 !important; font-weight: 400 !important;
+                    }
+                    .stream-blink { animation: blinker 1.5s linear infinite; color: #e50914; font-weight: bold; }
+                    @keyframes blinker { 50% { opacity: 0.3; } }
+                </style>
+                <div class="stream-spinner"></div>
+                <div class="stream-title" id="overlay-title">${t}</div>
+                <div class="stream-sub" id="overlay-sub">${s}</div>
+            `;
+            document.body.appendChild(overlay);
         }, title, sub);
     } catch (e) {}
 }
@@ -175,7 +174,8 @@ async function hideLoadingUI(page) {
     try {
         await page.evaluate(() => {
             const overlay = document.getElementById('smart-stream-overlay');
-            if (overlay) overlay.style.display = 'none';
+            // ⚡ FIX: Use .remove() strictly to nuke the element from DOM
+            if (overlay) overlay.remove();
         });
     } catch (e) {}
 }
@@ -368,7 +368,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
 
     } catch (e) { }
 
-    // ⚡ Video ready ho jaye ya error aaye, dono suraton mein loading screen hide kardo
+    // ⚡ Normal Remove
     await hideLoadingUI(page);
 }
 
@@ -420,6 +420,9 @@ async function startWatchdog() {
         let activeStatus = await checkPageStatus(activePage);
 
         if (activeStatus.status === 'HEALTHY') {
+            // ⚡ FIX: WATCHDOG AUTO-NUKE! Agar video smoothly play ho rahi hai toh overlay ko mita do.
+            await hideLoadingUI(activePage); 
+
             if (activeStatus.currentTime === lastActiveTime) {
                 if (Date.now() - frozenCheckTimestamp > FROZEN_THRESHOLD_MS) activeStatus.status = 'FROZEN';
             } else {
@@ -456,10 +459,7 @@ async function startWatchdog() {
             if (backupStatus.status === 'HEALTHY' || backupStatus.status === 'DEAD') { 
                 console.log(`[+] Executing INSTANT SMART HOT-SWAP ⚡`);
                 
-                // ⚡ PREMIUM UI: Frozen tab par fauran "Interrupted" dikhao
-                await showLoadingUI(activePage, "STREAM INTERRUPTED", "Server issue detected. Switching to backup server <span class='stream-blink'>...</span><br>Please wait a few seconds.");
-
-                // STEP 1: Mute Active Page (Safe Deep scan)
+                // STEP 1: Mute Active Page
                 for (const frame of activePage.frames()) {
                     try {
                         if (!frame.isDetached()) {
@@ -470,16 +470,14 @@ async function startWatchdog() {
                     } catch(e) {}
                 }
                 
-                // STEP 2: Bring backup to front 
+                // STEP 2: Naye backup tab par "Reconnecting" lagao aur use front pe lao
+                await showLoadingUI(backupPage, "RECONNECTING", "Establishing secure connection to backup server <span class='stream-blink'>...</span>");
                 await backupPage.bringToFront();
                 await new Promise(r => setTimeout(r, 1000)); 
                 
-                // ⚡ PREMIUM UI: Naye backup tab par "Reconnecting" dikhao jab tak video ready na ho jaye
-                await showLoadingUI(backupPage, "RECONNECTING", "Establishing secure connection to backup server <span class='stream-blink'>...</span>");
-
-                // STEP 3: Initialize Video
+                // STEP 3: Initialize Video (Yeh internally hide bhi call karega)
                 console.log(`[*] Initializing Video on the newly active tab...`);
-                await initializeVideo(backupPage, false, true); // Hide overlay automatic run ho jayega iske andar
+                await initializeVideo(backupPage, false, true); 
 
                 // Swap variables
                 let brokenPage = activePage;
@@ -487,7 +485,7 @@ async function startWatchdog() {
                 backupPage = brokenPage;
 
                 lastActiveTime = -1;
-                frozenCheckTimestamp = Date.now();
+                frozenCheckTimestamp = Date.now(); // Reset frozen timer for the newly swapped tab
 
                 // Rotate URL Index
                 currentUrlIndex = backupUrlIndex; 
@@ -575,7 +573,6 @@ async function startDirectStreaming() {
     console.log(`[*] STEP 1: Loading Server [${currentUrlIndex}] on Active Page: ${urlList[currentUrlIndex]}`);
     await activePage.goto(urlList[currentUrlIndex], { waitUntil: 'domcontentloaded', timeout: 60000 });
     
-    // ⚡ PREMIUM UI: First Load Par
     await showLoadingUI(activePage, "STREAM LOADING", "Optimizing live video connection <span class='stream-blink'>...</span>");
     
     await initializeVideo(activePage, false, true); 
