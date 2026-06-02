@@ -1,4 +1,3 @@
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -6,7 +5,7 @@ puppeteer.use(StealthPlugin());
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn, execSync, exec } = require('child_process'); // ⚡ FIX: Added async 'exec'
+const { spawn, execSync, exec } = require('child_process');
 const { OBSWebSocket } = require('obs-websocket-js'); 
 
 const obs = new OBSWebSocket(); 
@@ -232,7 +231,7 @@ function setupOBSConfig() {
 }
 
 // =========================================================================
-// 🎬 VIDEO INITIALIZATION (Restored Smart Logic)
+// 🎬 VIDEO INITIALIZATION (Smart Autoplay & Force Play Logic)
 // =========================================================================
 async function initializeVideo(page, startMuted, isActivePage) {
     try {
@@ -257,15 +256,37 @@ async function initializeVideo(page, startMuted, isActivePage) {
             }
         }
 
-        console.log('[*] Hunting for the Play Button...');
-        let buttonClicked = false; 
+        console.log('[*] Checking if Video is Autoplaying or Needs a Play Button...');
+        let isVideoPlaying = false; 
         let attempts = 0;
         
-        while (!buttonClicked && attempts < 15) {
-            console.log(`[*] Searching for Play button... (Attempt ${attempts + 1}/15)`);
+        while (!isVideoPlaying && attempts < 15) {
+            console.log(`[*] Player status scan kar raha hoon... (Attempt ${attempts + 1}/15)`);
+            
             for (const frame of page.frames()) {
                 try {
-                    const playBtn = await frame.$('.jw-icon-display[aria-label="Play"], button[data-plyr="play"], .vjs-big-play-button, [class*="unmute"]');
+                    // 1. SMART CHECK: Autoplay detection
+                    const autoPlayed = await frame.evaluate(() => {
+                        let playing = false;
+                        document.querySelectorAll('video').forEach(v => {
+                            if (v.clientWidth > 100 && !v.paused && v.currentTime > 0) {
+                                // Agar video chal rahi hai toh unmute kar do foran
+                                v.muted = false; 
+                                v.volume = 1.0;
+                                playing = true;
+                            }
+                        });
+                        return playing;
+                    });
+
+                    if (autoPlayed) {
+                        console.log(`[+] Video khud automatically start ho chuki hai (Autoplay Detected)! Unmuting...`);
+                        isVideoPlaying = true;
+                        break;
+                    }
+
+                    // 2. Play button dhoondho
+                    const playBtn = await frame.$('.jw-icon-display[aria-label="Play"], button[data-plyr="play"], .vjs-big-play-button, [class*="unmute"], .fp-play');
                     if (playBtn) {
                         const isVisible = await frame.evaluate(el => {
                             const style = window.getComputedStyle(el);
@@ -275,14 +296,40 @@ async function initializeVideo(page, startMuted, isActivePage) {
                         if (isVisible) {
                             console.log(`[+] Play button mil gaya! Click kar raha hoon...`);
                             await frame.evaluate(el => el.click(), playBtn); 
-                            buttonClicked = true;
                             await takeAndBatchScreenshot(page, `play-btn-clicked`);
+                            isVideoPlaying = true;
                             break; 
+                        }
+                    }
+
+                    // 3. FORCE PLAY FALLBACK (Agar 6 attempts tak kuch na ho)
+                    if (!isVideoPlaying && attempts > 5) {
+                        const forced = await frame.evaluate(() => {
+                            let played = false;
+                            document.querySelectorAll('video').forEach(v => {
+                                if (v.clientWidth > 100) { 
+                                    v.muted = false;
+                                    v.volume = 1.0;
+                                    v.click(); // Simulated user click
+                                    const playPromise = v.play();
+                                    if (playPromise !== undefined) playPromise.catch(e => {});
+                                    played = true;
+                                }
+                            });
+                            return played;
+                        });
+
+                        if (forced) {
+                            console.log(`[+] Play button chupa hua tha. Direct Video Element ko Force Play kar diya!`);
+                            await takeAndBatchScreenshot(page, `force-play-applied`);
+                            isVideoPlaying = true;
+                            break;
                         }
                     }
                 } catch (err) {}
             }
-            if (!buttonClicked) await new Promise(r => setTimeout(r, 2000));
+            
+            if (!isVideoPlaying) await new Promise(r => setTimeout(r, 2000));
             attempts++;
         }
 
@@ -308,7 +355,6 @@ async function initializeVideo(page, startMuted, isActivePage) {
         await page.evaluate(() => {
             document.body.style.backgroundColor = 'black';
             document.body.style.overflow = 'hidden';
-            // ⚡ FIX: Removed aggressive iframe override to prevent covering the video
         }).catch(() => {});
 
         await targetFrame.evaluate(async (muteVideo) => {
@@ -326,6 +372,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
             const videos = Array.from(document.querySelectorAll('video'));
             let realVideo = null;
 
+            // Yeh assure karega ke background tab muted rahe aur active full volume par
             mediaElements.forEach(media => {
                 media.muted = false; 
                 media.volume = muteVideo ? 0.0 : 1.0; 
@@ -343,7 +390,7 @@ async function initializeVideo(page, startMuted, isActivePage) {
                 realVideo.style.left = '0px';
                 realVideo.style.width = '100vw'; 
                 realVideo.style.height = '100vh';
-                realVideo.style.zIndex = '2147483647'; // Push ONLY the video to front
+                realVideo.style.zIndex = '2147483647'; 
                 realVideo.style.backgroundColor = 'black'; 
                 realVideo.style.objectFit = 'contain';
             }
