@@ -166,11 +166,37 @@ jobs:
                     }
 
                     console.log('\n[🎉] ALL DONE! System is 100% reset and clean.');
-                    console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
+
+
+                    # **************************************************************
+                    
+                    # console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
+                    # try {
+                    #   execSync(\`gh run cancel \${currentRunId}\`);
+                    # } catch(e) {}
+                    # process.exit(0);
+
+
+
+
+                    console.log(`[🛑] Manager self-destructing at ${getPktTime()}...`);
                     try {
-                      execSync(\`gh run cancel \${currentRunId}\`);
-                    } catch(e) {}
-                    process.exit(0);
+                      execSync(`gh run cancel ${currentRunId}`, { stdio: 'inherit' });
+                      console.log('[*] Cancellation signal sent to GitHub. Waiting 15 seconds for forced termination...');
+                      
+                      // GitHub ko runner forcefully kill karne ke liye 15 seconds ka time dena zaroori hai
+                      await new Promise(r => setTimeout(r, 15000));
+                    } catch(e) {
+                      console.log(`[!] Failed to cancel self via CLI: ${e.message}`);
+                    }
+                    
+                    // Agar 15 seconds baad bhi GitHub kill na kare, toh forcefully error state mein stop kar do
+                    console.log('[🛑] Forcing manual process exit...');
+                    process.exit(1);
+
+                    # ****************************************************
+                  
+                    
                   }
 
                   // =========================================================================
