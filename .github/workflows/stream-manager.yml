@@ -1,321 +1,15 @@
 
 
 
-name: Always-On Stream Manager (All-In-One Control)
-
-on:
-  workflow_dispatch:
-    inputs:
-      stop_time:
-        description: 'Auto-stop Date & Time in PKT (e.g., 2026-06-05 05:00 AM) or type "None" to keep running forever'
-        required: true
-        default: 'None'
-
-permissions:
-  contents: write
-  actions: write
-
-jobs:
-  super-manager:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 Hours Max Limit
-
-    steps:
-      - name: Get Code
-        uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Run Super Manager Loop (Every 5 Minutes)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          STOP_TIME: ${{ github.event.inputs.stop_time }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          node -e "
-            const fs = require('fs');
-            const { execSync } = require('child_process');
-
-            const LOOP_DURATION = 21000000; // 5 hours 50 minutes
-            const CHECK_INTERVAL = 300000; // Exact 5 Minutes (300,000 ms)
-            const startMs = Date.now();
-            const currentRunId = process.env.GITHUB_RUN_ID;
-            const stopTimeInput = (process.env.STOP_TIME || 'None').trim();
-
-            // 🕰️ Helper Function: Exact PKT Time Format karne ke liye
-            function getPktTime(offsetMs = 0) {
-              return new Date(Date.now() + offsetMs).toLocaleString('en-US', { 
-                timeZone: 'Asia/Karachi', 
-                hour12: true, 
-                month: 'short', 
-                day: '2-digit', 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-              });
-            }
-
-            console.log('\n==================================================');
-            console.log(\`[*] SUPER MANAGER STARTED AT: \${getPktTime()}\`);
-            console.log(\`[*] TARGET AUTO-STOP TIME: \${stopTimeInput}\`);
-            console.log('==================================================');
-
-            async function startLoop() {
-              let loopCount = 1;
-
-              while (Date.now() - startMs < LOOP_DURATION) {
-                try {
-                  const currentUptime = ((Date.now() - startMs) / 60000).toFixed(1);
-                  
-                  console.log('\n--------------------------------------------------');
-                  console.log(\`[⏱️] SYSTEM CHECK ROUND #\${loopCount}\`);
-                  console.log(\`[📍] Current Time: \${getPktTime()} (PKT)\`);
-                  console.log(\`[⏳] Manager Uptime: \${currentUptime} Minutes\`);
-                  console.log('--------------------------------------------------');
-
-                  // =========================================================================
-                  // 🛑 DYNAMIC CRITICAL SWITCH: AUTO CLEANUP RESET CHECK (UPDATED FOR DATES)
-                  // =========================================================================
-                  let triggerCleanup = false;
-
-                  if (stopTimeInput.toLowerCase() !== 'none') {
-                    // Match format: YYYY-MM-DD HH:MM AM/PM
-                    const dateMatch = stopTimeInput.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-                    
-                    if (dateMatch) {
-                      let [_, datePart, stopHours, stopMinutes, stopAmpm] = dateMatch;
-                      stopHours = parseInt(stopHours);
-                      stopMinutes = parseInt(stopMinutes);
-
-                      if (stopAmpm.toUpperCase() === 'PM' && stopHours < 12) stopHours += 12;
-                      if (stopAmpm.toUpperCase() === 'AM' && stopHours === 12) stopHours = 0;
-
-                      // Exact Date object create karna for PKT timezone (+05:00)
-                      const targetDateStr = \`\${datePart}T\${stopHours.toString().padStart(2, '0')}:\${stopMinutes.toString().padStart(2, '0')}:00+05:00\`;
-                      const targetTimeMs = new Date(targetDateStr).getTime();
-                      const nowMs = Date.now();
-
-                      // Agar System ka time Target time ke barabar ya usse aage nikal chuka hai, toh trigger karo!
-                      if (nowMs >= targetTimeMs) {
-                        triggerCleanup = true;
-                      }
-                    } else {
-                      console.log(\`[!] Warning: Invalid format provided (\${stopTimeInput}). Please use: YYYY-MM-DD HH:MM AM/PM (e.g., 2026-06-05 05:00 AM)\`);
-                    }
-                  }
-
-                  if (triggerCleanup) {
-                    console.log('\n==================================================');
-                    console.log(\`[🛑] TARGET TIME (\${stopTimeInput}) REACHED! STARTING SYSTEM RESET...\\n\`);
-                    console.log('==================================================');
-
-                    let otherRunsPending = true;
-                    let attempts = 0;
-
-                    while (otherRunsPending && attempts < 6) {
-                      attempts++;
-                      console.log(\`[*] Scanning running workflows... (Attempt \${attempts}/6)\`);
-                      
-                      const runsJson = execSync('gh run list --status in_progress --json databaseId,workflowName', { encoding: 'utf8' });
-                      const runs = JSON.parse(runsJson || '[]');
-                      const otherRuns = runs.filter(r => String(r.databaseId) !== String(currentRunId));
-
-                      if (otherRuns.length === 0) {
-                        console.log('[🎉] Success: Saare dusre running actions stop ho chuke hain!');
-                        otherRunsPending = false;
-                        break;
-                      }
-
-                      console.log(\`[!] \${otherRuns.length} running actions mile hain. Force cancelling them...\`);
-                      for (const r of otherRuns) {
-                        try {
-                          console.log(\`[-] Cancelling Run ID: \${r.databaseId} (\${r.workflowName})\`);
-                          execSync(\`gh run cancel \${r.databaseId}\`, { stdio: 'ignore' });
-                        } catch(e) {}
-                      }
-
-                      if (otherRunsPending) {
-                        console.log('[*] 30 seconds wait kar rahe hain taake state change ho jaye...');
-                        await new Promise(r => setTimeout(r, 30000));
-                      }
-                    }
-
-                    console.log('\n[*] Shifting to Step 2: Cleaning all cancelled workflows (Kachra)...');
-                    await new Promise(r => setTimeout(r, 10000)); 
-
-                    const cancelledJson = execSync('gh run list --status cancelled --json databaseId', { encoding: 'utf8' });
-                    const cancelledRuns = JSON.parse(cancelledJson || '[]');
-
-                    if (cancelledRuns.length > 0) {
-                      console.log(\`[!] \${cancelledRuns.length} cancelled rows mili hain. Permanently deleting...\`);
-                      for (const r of cancelledRuns) {
-                        try {
-                          console.log(\`[-] Deleting History for Run ID: \${r.databaseId}\`);
-                          execSync(\`gh run delete \${r.databaseId}\`, { stdio: 'ignore' });
-                        } catch(e) {}
-                      }
-                    }
-
-                    console.log('\n[🎉] ALL DONE! System is 100% reset and clean.');
-
-
-                    # **************************************************************
-                    
-                    # console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
-                    # try {
-                    #   execSync(\`gh run cancel \${currentRunId}\`);
-                    # } catch(e) {}
-                    # process.exit(0);
-
-
-
-
-                    console.log(`[🛑] Manager self-destructing at ${getPktTime()}...`);
-                    try {
-                      execSync(`gh run cancel ${currentRunId}`, { stdio: 'inherit' });
-                      console.log('[*] Cancellation signal sent to GitHub. Waiting 15 seconds for forced termination...');
-                      
-                      // GitHub ko runner forcefully kill karne ke liye 15 seconds ka time dena zaroori hai
-                      await new Promise(r => setTimeout(r, 15000));
-                    } catch(e) {
-                      console.log(`[!] Failed to cancel self via CLI: ${e.message}`);
-                    }
-                    
-                    // Agar 15 seconds baad bhi GitHub kill na kare, toh forcefully error state mein stop kar do
-                    console.log('[🛑] Forcing manual process exit...');
-                    process.exit(1);
-
-                    # ****************************************************
-                  
-                    
-                  }
-
-                  // =========================================================================
-                  // 🔄 NORMAL MODE: STREAM SCHEDULER CHECK
-                  // =========================================================================
-                  execSync('git pull origin main --rebase', { stdio: 'ignore' });
-                  
-                  if (fs.existsSync('streams.csv')) {
-                    const csvData = fs.readFileSync('streams.csv', 'utf8');
-                    const lines = csvData.trim().split('\n');
-                    const header = lines[0];
-                    let updatedCsv = [header];
-                    let changesMade = false;
-                    const nowUtc = new Date();
-
-                    for (let i = 1; i < lines.length; i++) {
-                      if (!lines[i].trim()) continue;
-                      const parts = lines[i].split(',').map(s => s.trim());
-                      if (parts.length < 6) { updatedCsv.push(lines[i]); continue; }
-                      
-                      const [url, channel, quality, server, startTimeStr, duration] = parts;
-                      if (!startTimeStr || startTimeStr === 'None' || startTimeStr === '') {
-                        updatedCsv.push(lines[i]); continue;
-                      }
-
-                      const match = startTimeStr.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+(AM|PM)/i);
-                      if (match) {
-                        let [_, datePart, hours, minutes, ampm] = match;
-                        hours = parseInt(hours);
-                        if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
-                        if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
-
-                        const targetDateStr = \`\${datePart}T\${hours.toString().padStart(2, '0')}:\${minutes}:00+05:00\`;
-                        const targetTime = new Date(targetDateStr);
-                        const diffMinutes = (targetTime - nowUtc) / (1000 * 60);
-
-                        if (diffMinutes <= 20 && diffMinutes >= -5) {
-                          const formattedUrls = url.replace(/\|/g, ',');
-                          
-                          console.log(\`\n[🚀] TRIGGER WINDOW HIT! Starting Channel \${channel} (Time Diff: \${diffMinutes.toFixed(1)}m)\`);
-                          const cmd = \`gh workflow run main.yml -f target_urls='\${formattedUrls}' -f okru_stream_channel='\${channel}' -f stream_quality='\${quality}' -f server_selection='\${server}' -f custom_duration='\${duration}'\`;
-                          try {
-                            execSync(cmd, { stdio: 'inherit' });
-                            changesMade = true;
-                          } catch(e) { updatedCsv.push(lines[i]); }
-                        } else if (diffMinutes < -5) {
-                          changesMade = true; 
-                        } else {
-                          updatedCsv.push(lines[i]); 
-                        }
-                      } else {
-                        updatedCsv.push(lines[i]);
-                      }
-                    }
-
-                    if (changesMade) {
-                      fs.writeFileSync('streams.csv', updatedCsv.join('\n') + '\n');
-                      execSync('git add streams.csv && git commit -m \"Bot: Stream triggered and queue updated\" && git push', { stdio: 'ignore' });
-                      console.log('[+] streams.csv updated and pushed successfully!');
-                    }
-                  }
-
-                } catch(err) {
-                  console.log('[!] Loop warning: ' + err.message);
-                }
-
-                console.log(\`[*] Check round \${loopCount} completed.\`);
-                console.log(\`[⏰] Sleeping for 5 mins... Next check will be exactly at: \${getPktTime(CHECK_INTERVAL)} (PKT)\`);
-                
-                loopCount++;
-                await new Promise(r => setTimeout(r, CHECK_INTERVAL));
-              }
-
-              // =========================================================================
-              // ⏱️ SHIFT OVERLAP LOGIC (Passes custom stop_time to next runner)
-              // =========================================================================
-              console.log('\n==================================================');
-              console.log(\`[*] 5h 50m Completed at \${getPktTime()}! Triggering next Stream Manager...\`);
-              try {
-                const nextManagerCmd = \`gh workflow run stream-manager.yml -f stop_time="\${stopTimeInput}"\`;
-                execSync(nextManagerCmd, { stdio: 'inherit' });
-                console.log('[+] Next manager triggered successfully with configuration target: ' + stopTimeInput);
-                console.log('[+] Waiting 5 minutes for handover...');
-                
-                await new Promise(r => setTimeout(r, 300000));
-                console.log(\`[+] Handover complete at \${getPktTime()}. Old manager shutting down cleanly.\`);
-              } catch(err) {
-                console.error('[-] Failed to loop manager:', err.message);
-              }
-              process.exit(0);
-            }
-
-            startLoop();
-          "
-
-
-
-          
-
-
-
-
-
-
-
-
-
-
-
-
 # name: Always-On Stream Manager (All-In-One Control)
 
 # on:
 #   workflow_dispatch:
 #     inputs:
 #       stop_time:
-#         description: 'Auto-stop time in PKT (e.g., 3:00 AM, 12:00 AM, 12:30 PM) or type "None" to keep running forever'
+#         description: 'Auto-stop Date & Time in PKT (e.g., 2026-06-05 05:00 AM) or type "None" to keep running forever'
 #         required: true
-#         default: '3:00 AM'
+#         default: 'None'
 
 # permissions:
 #   contents: write
@@ -355,7 +49,7 @@ jobs:
 #             const CHECK_INTERVAL = 300000; // Exact 5 Minutes (300,000 ms)
 #             const startMs = Date.now();
 #             const currentRunId = process.env.GITHUB_RUN_ID;
-#             const stopTimeInput = (process.env.STOP_TIME || '3:00 AM').trim();
+#             const stopTimeInput = (process.env.STOP_TIME || 'None').trim();
 
 #             // 🕰️ Helper Function: Exact PKT Time Format karne ke liye
 #             function getPktTime(offsetMs = 0) {
@@ -388,31 +82,34 @@ jobs:
 #                   console.log(\`[⏳] Manager Uptime: \${currentUptime} Minutes\`);
 #                   console.log('--------------------------------------------------');
 
-#                   const nowPkt = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
-#                   const pktHours = nowPkt.getHours();
-#                   const pktMinutes = nowPkt.getMinutes();
-
 #                   // =========================================================================
-#                   // 🛑 DYNAMIC CRITICAL SWITCH: AUTO CLEANUP RESET CHECK
+#                   // 🛑 DYNAMIC CRITICAL SWITCH: AUTO CLEANUP RESET CHECK (UPDATED FOR DATES)
 #                   // =========================================================================
 #                   let triggerCleanup = false;
 
 #                   if (stopTimeInput.toLowerCase() !== 'none') {
-#                     const timeMatch = stopTimeInput.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-#                     if (timeMatch) {
-#                       let [_, stopHours, stopMinutes, stopAmpm] = timeMatch;
+#                     // Match format: YYYY-MM-DD HH:MM AM/PM
+#                     const dateMatch = stopTimeInput.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                    
+#                     if (dateMatch) {
+#                       let [_, datePart, stopHours, stopMinutes, stopAmpm] = dateMatch;
 #                       stopHours = parseInt(stopHours);
 #                       stopMinutes = parseInt(stopMinutes);
 
 #                       if (stopAmpm.toUpperCase() === 'PM' && stopHours < 12) stopHours += 12;
 #                       if (stopAmpm.toUpperCase() === 'AM' && stopHours === 12) stopHours = 0;
 
-#                       // Agar current time selected window ke andar aa jaye (15 mins window)
-#                       if (pktHours === stopHours && pktMinutes >= stopMinutes && pktMinutes < stopMinutes + 15) {
+#                       // Exact Date object create karna for PKT timezone (+05:00)
+#                       const targetDateStr = \`\${datePart}T\${stopHours.toString().padStart(2, '0')}:\${stopMinutes.toString().padStart(2, '0')}:00+05:00\`;
+#                       const targetTimeMs = new Date(targetDateStr).getTime();
+#                       const nowMs = Date.now();
+
+#                       // Agar System ka time Target time ke barabar ya usse aage nikal chuka hai, toh trigger karo!
+#                       if (nowMs >= targetTimeMs) {
 #                         triggerCleanup = true;
 #                       }
 #                     } else {
-#                       console.log(\`[!] Warning: Invalid time format provided (\${stopTimeInput}). Expected e.g., 3:00 AM\`);
+#                       console.log(\`[!] Warning: Invalid format provided (\${stopTimeInput}). Please use: YYYY-MM-DD HH:MM AM/PM (e.g., 2026-06-05 05:00 AM)\`);
 #                     }
 #                   }
 
@@ -469,11 +166,37 @@ jobs:
 #                     }
 
 #                     console.log('\n[🎉] ALL DONE! System is 100% reset and clean.');
-#                     console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
+
+
+#                     # **************************************************************
+                    
+#                     # console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
+#                     # try {
+#                     #   execSync(\`gh run cancel \${currentRunId}\`);
+#                     # } catch(e) {}
+#                     # process.exit(0);
+
+
+
+
+#                     console.log(`[🛑] Manager self-destructing at ${getPktTime()}...`);
 #                     try {
-#                       execSync(\`gh run cancel \${currentRunId}\`);
-#                     } catch(e) {}
-#                     process.exit(0);
+#                       execSync(`gh run cancel ${currentRunId}`, { stdio: 'inherit' });
+#                       console.log('[*] Cancellation signal sent to GitHub. Waiting 15 seconds for forced termination...');
+                      
+#                       // GitHub ko runner forcefully kill karne ke liye 15 seconds ka time dena zaroori hai
+#                       await new Promise(r => setTimeout(r, 15000));
+#                     } catch(e) {
+#                       console.log(`[!] Failed to cancel self via CLI: ${e.message}`);
+#                     }
+                    
+#                     // Agar 15 seconds baad bhi GitHub kill na kare, toh forcefully error state mein stop kar do
+#                     console.log('[🛑] Forcing manual process exit...');
+#                     process.exit(1);
+
+#                     # ****************************************************
+                  
+                    
 #                   }
 
 #                   // =========================================================================
@@ -568,6 +291,287 @@ jobs:
 
 #             startLoop();
 #           "
+
+
+
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ============= Alhamdullah A one ===================
+
+name: Always-On Stream Manager (All-In-One Control)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stop_time:
+        description: 'Auto-stop time in PKT (e.g., 3:00 AM, 12:00 AM, 12:30 PM) or type "None" to keep running forever'
+        required: true
+        default: '3:00 AM'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  super-manager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 Hours Max Limit
+
+    steps:
+      - name: Get Code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Run Super Manager Loop (Every 5 Minutes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          STOP_TIME: ${{ github.event.inputs.stop_time }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          node -e "
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const LOOP_DURATION = 21000000; // 5 hours 50 minutes
+            const CHECK_INTERVAL = 300000; // Exact 5 Minutes (300,000 ms)
+            const startMs = Date.now();
+            const currentRunId = process.env.GITHUB_RUN_ID;
+            const stopTimeInput = (process.env.STOP_TIME || '3:00 AM').trim();
+
+            // 🕰️ Helper Function: Exact PKT Time Format karne ke liye
+            function getPktTime(offsetMs = 0) {
+              return new Date(Date.now() + offsetMs).toLocaleString('en-US', { 
+                timeZone: 'Asia/Karachi', 
+                hour12: true, 
+                month: 'short', 
+                day: '2-digit', 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+              });
+            }
+
+            console.log('\n==================================================');
+            console.log(\`[*] SUPER MANAGER STARTED AT: \${getPktTime()}\`);
+            console.log(\`[*] TARGET AUTO-STOP TIME: \${stopTimeInput}\`);
+            console.log('==================================================');
+
+            async function startLoop() {
+              let loopCount = 1;
+
+              while (Date.now() - startMs < LOOP_DURATION) {
+                try {
+                  const currentUptime = ((Date.now() - startMs) / 60000).toFixed(1);
+                  
+                  console.log('\n--------------------------------------------------');
+                  console.log(\`[⏱️] SYSTEM CHECK ROUND #\${loopCount}\`);
+                  console.log(\`[📍] Current Time: \${getPktTime()} (PKT)\`);
+                  console.log(\`[⏳] Manager Uptime: \${currentUptime} Minutes\`);
+                  console.log('--------------------------------------------------');
+
+                  const nowPkt = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
+                  const pktHours = nowPkt.getHours();
+                  const pktMinutes = nowPkt.getMinutes();
+
+                  // =========================================================================
+                  // 🛑 DYNAMIC CRITICAL SWITCH: AUTO CLEANUP RESET CHECK
+                  // =========================================================================
+                  let triggerCleanup = false;
+
+                  if (stopTimeInput.toLowerCase() !== 'none') {
+                    const timeMatch = stopTimeInput.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                    if (timeMatch) {
+                      let [_, stopHours, stopMinutes, stopAmpm] = timeMatch;
+                      stopHours = parseInt(stopHours);
+                      stopMinutes = parseInt(stopMinutes);
+
+                      if (stopAmpm.toUpperCase() === 'PM' && stopHours < 12) stopHours += 12;
+                      if (stopAmpm.toUpperCase() === 'AM' && stopHours === 12) stopHours = 0;
+
+                      // Agar current time selected window ke andar aa jaye (15 mins window)
+                      if (pktHours === stopHours && pktMinutes >= stopMinutes && pktMinutes < stopMinutes + 15) {
+                        triggerCleanup = true;
+                      }
+                    } else {
+                      console.log(\`[!] Warning: Invalid time format provided (\${stopTimeInput}). Expected e.g., 3:00 AM\`);
+                    }
+                  }
+
+                  if (triggerCleanup) {
+                    console.log('\n==================================================');
+                    console.log(\`[🛑] TARGET TIME (\${stopTimeInput}) REACHED! STARTING SYSTEM RESET...\\n\`);
+                    console.log('==================================================');
+
+                    let otherRunsPending = true;
+                    let attempts = 0;
+
+                    while (otherRunsPending && attempts < 6) {
+                      attempts++;
+                      console.log(\`[*] Scanning running workflows... (Attempt \${attempts}/6)\`);
+                      
+                      const runsJson = execSync('gh run list --status in_progress --json databaseId,workflowName', { encoding: 'utf8' });
+                      const runs = JSON.parse(runsJson || '[]');
+                      const otherRuns = runs.filter(r => String(r.databaseId) !== String(currentRunId));
+
+                      if (otherRuns.length === 0) {
+                        console.log('[🎉] Success: Saare dusre running actions stop ho chuke hain!');
+                        otherRunsPending = false;
+                        break;
+                      }
+
+                      console.log(\`[!] \${otherRuns.length} running actions mile hain. Force cancelling them...\`);
+                      for (const r of otherRuns) {
+                        try {
+                          console.log(\`[-] Cancelling Run ID: \${r.databaseId} (\${r.workflowName})\`);
+                          execSync(\`gh run cancel \${r.databaseId}\`, { stdio: 'ignore' });
+                        } catch(e) {}
+                      }
+
+                      if (otherRunsPending) {
+                        console.log('[*] 30 seconds wait kar rahe hain taake state change ho jaye...');
+                        await new Promise(r => setTimeout(r, 30000));
+                      }
+                    }
+
+                    console.log('\n[*] Shifting to Step 2: Cleaning all cancelled workflows (Kachra)...');
+                    await new Promise(r => setTimeout(r, 10000)); 
+
+                    const cancelledJson = execSync('gh run list --status cancelled --json databaseId', { encoding: 'utf8' });
+                    const cancelledRuns = JSON.parse(cancelledJson || '[]');
+
+                    if (cancelledRuns.length > 0) {
+                      console.log(\`[!] \${cancelledRuns.length} cancelled rows mili hain. Permanently deleting...\`);
+                      for (const r of cancelledRuns) {
+                        try {
+                          console.log(\`[-] Deleting History for Run ID: \${r.databaseId}\`);
+                          execSync(\`gh run delete \${r.databaseId}\`, { stdio: 'ignore' });
+                        } catch(e) {}
+                      }
+                    }
+
+                    console.log('\n[🎉] ALL DONE! System is 100% reset and clean.');
+                    console.log(\`[🛑] Manager self-destructing at \${getPktTime()}...\`);
+                    try {
+                      execSync(\`gh run cancel \${currentRunId}\`);
+                    } catch(e) {}
+                    process.exit(0);
+                  }
+
+                  // =========================================================================
+                  // 🔄 NORMAL MODE: STREAM SCHEDULER CHECK
+                  // =========================================================================
+                  execSync('git pull origin main --rebase', { stdio: 'ignore' });
+                  
+                  if (fs.existsSync('streams.csv')) {
+                    const csvData = fs.readFileSync('streams.csv', 'utf8');
+                    const lines = csvData.trim().split('\n');
+                    const header = lines[0];
+                    let updatedCsv = [header];
+                    let changesMade = false;
+                    const nowUtc = new Date();
+
+                    for (let i = 1; i < lines.length; i++) {
+                      if (!lines[i].trim()) continue;
+                      const parts = lines[i].split(',').map(s => s.trim());
+                      if (parts.length < 6) { updatedCsv.push(lines[i]); continue; }
+                      
+                      const [url, channel, quality, server, startTimeStr, duration] = parts;
+                      if (!startTimeStr || startTimeStr === 'None' || startTimeStr === '') {
+                        updatedCsv.push(lines[i]); continue;
+                      }
+
+                      const match = startTimeStr.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+(AM|PM)/i);
+                      if (match) {
+                        let [_, datePart, hours, minutes, ampm] = match;
+                        hours = parseInt(hours);
+                        if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+                        if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
+
+                        const targetDateStr = \`\${datePart}T\${hours.toString().padStart(2, '0')}:\${minutes}:00+05:00\`;
+                        const targetTime = new Date(targetDateStr);
+                        const diffMinutes = (targetTime - nowUtc) / (1000 * 60);
+
+                        if (diffMinutes <= 20 && diffMinutes >= -5) {
+                          const formattedUrls = url.replace(/\|/g, ',');
+                          
+                          console.log(\`\n[🚀] TRIGGER WINDOW HIT! Starting Channel \${channel} (Time Diff: \${diffMinutes.toFixed(1)}m)\`);
+                          const cmd = \`gh workflow run main.yml -f target_urls='\${formattedUrls}' -f okru_stream_channel='\${channel}' -f stream_quality='\${quality}' -f server_selection='\${server}' -f custom_duration='\${duration}'\`;
+                          try {
+                            execSync(cmd, { stdio: 'inherit' });
+                            changesMade = true;
+                          } catch(e) { updatedCsv.push(lines[i]); }
+                        } else if (diffMinutes < -5) {
+                          changesMade = true; 
+                        } else {
+                          updatedCsv.push(lines[i]); 
+                        }
+                      } else {
+                        updatedCsv.push(lines[i]);
+                      }
+                    }
+
+                    if (changesMade) {
+                      fs.writeFileSync('streams.csv', updatedCsv.join('\n') + '\n');
+                      execSync('git add streams.csv && git commit -m \"Bot: Stream triggered and queue updated\" && git push', { stdio: 'ignore' });
+                      console.log('[+] streams.csv updated and pushed successfully!');
+                    }
+                  }
+
+                } catch(err) {
+                  console.log('[!] Loop warning: ' + err.message);
+                }
+
+                console.log(\`[*] Check round \${loopCount} completed.\`);
+                console.log(\`[⏰] Sleeping for 5 mins... Next check will be exactly at: \${getPktTime(CHECK_INTERVAL)} (PKT)\`);
+                
+                loopCount++;
+                await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+              }
+
+              // =========================================================================
+              // ⏱️ SHIFT OVERLAP LOGIC (Passes custom stop_time to next runner)
+              // =========================================================================
+              console.log('\n==================================================');
+              console.log(\`[*] 5h 50m Completed at \${getPktTime()}! Triggering next Stream Manager...\`);
+              try {
+                const nextManagerCmd = \`gh workflow run stream-manager.yml -f stop_time="\${stopTimeInput}"\`;
+                execSync(nextManagerCmd, { stdio: 'inherit' });
+                console.log('[+] Next manager triggered successfully with configuration target: ' + stopTimeInput);
+                console.log('[+] Waiting 5 minutes for handover...');
+                
+                await new Promise(r => setTimeout(r, 300000));
+                console.log(\`[+] Handover complete at \${getPktTime()}. Old manager shutting down cleanly.\`);
+              } catch(err) {
+                console.error('[-] Failed to loop manager:', err.message);
+              }
+              process.exit(0);
+            }
+
+            startLoop();
+          "
 
 
 
